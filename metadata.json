@@ -1,0 +1,11 @@
+{
+  "name": "ScreenSight Pro v4",
+  "description": "High-performance AI screen analyzer, performance tracking monitor, and automated technical insights dashboard powered by Gemini.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

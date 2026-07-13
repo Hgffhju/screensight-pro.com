@@ -1,0 +1,75 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "DM Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  --font-syne: "Syne", sans-serif;
+
+  --color-bg: #03070e;
+  --color-surf: #060c17;
+  --color-card: #090f1e;
+  --color-card2: #0b1322;
+  --color-border-main: #152236;
+  --color-border-hover: #1e3550;
+  
+  --color-cyan-glow: #00c8f0;
+  --color-green-glow: #00df6e;
+  --color-purple-glow: #9d78f8;
+  --color-red-glow: #f03060;
+  --color-gold-glow: #f5c842;
+}
+
+/* Cosmic Ambient noise texture */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.035'/%3E%3C/svg%3E");
+  background-repeat: repeat;
+  background-size: 200px 200px;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0.15;
+}
+
+/* Cybernetic Scanlines */
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0, 200, 240, 0.012) 2px,
+    rgba(0, 200, 240, 0.012) 4px
+  );
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* Custom cyber scrollbars */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #1e3550;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #00c8f0;
+}
+
+/* Pulse / Shimmer Animations */
+@keyframes neonPulse {
+  0%, 100% { opacity: 1; filter: drop-shadow(0 0 4px rgba(0, 200, 240, 0.6)); }
+  50% { opacity: 0.4; filter: drop-shadow(0 0 1px rgba(0, 200, 240, 0.1)); }
+}
+
+.glow-active {
+  animation: neonPulse 2s infinite ease-in-out;
+}

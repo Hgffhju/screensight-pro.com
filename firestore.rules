@@ -1,0 +1,134 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // 1. Default-deny catch-all rule
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Helper Functions ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isOwnerVerified(userId) {
+      return isVerified() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // --- Schema Validation Helpers ---
+    function isValidUser(data) {
+      return data.keys().hasAll(['email', 'displayName', 'createdAt']) && 
+             data.keys().size() == 3 &&
+             data.email is string && data.email.size() <= 256 &&
+             data.displayName is string && data.displayName.size() <= 128 &&
+             data.createdAt is timestamp;
+    }
+
+    function isValidTimeframeAnalysis(data, userId) {
+      return data.keys().hasAll(['userId', 'timeframe', 'bias', 'trend', 'candlestickPattern', 'chartPattern', 'smcSignals', 'summary', 'createdAt']) &&
+             data.keys().size() >= 9 && data.keys().size() <= 13 &&
+             data.userId == userId &&
+             data.timeframe is string && data.timeframe.size() <= 16 &&
+             data.bias is string && data.bias.size() <= 32 &&
+             data.trend is string && data.trend.size() <= 64 &&
+             data.candlestickPattern is string && data.candlestickPattern.size() <= 128 &&
+             data.chartPattern is string && data.chartPattern.size() <= 128 &&
+             data.smcSignals is string && data.smcSignals.size() <= 256 &&
+             data.summary is string && data.summary.size() <= 4096 &&
+             data.createdAt is timestamp;
+    }
+
+    function isValidConfluence(data, userId) {
+      return data.keys().hasAll(['userId', 'overallBias', 'confluenceScore', 'dominantNarrative', 'alignedTimeframes', 'conflictingTimeframes', 'createdAt']) &&
+             data.keys().size() >= 7 && data.keys().size() <= 10 &&
+             data.userId == userId &&
+             data.overallBias is string && data.overallBias.size() <= 32 &&
+             (data.confluenceScore is int || data.confluenceScore is float) &&
+             data.confluenceScore >= 0 && data.confluenceScore <= 100 &&
+             data.dominantNarrative is string && data.dominantNarrative.size() <= 8192 &&
+             data.alignedTimeframes is list &&
+             data.conflictingTimeframes is list &&
+             data.createdAt is timestamp;
+    }
+
+    // --- Route Definitions ---
+
+    // USERS COLLECTION
+    match /users/{userId} {
+      allow get: if isOwner(userId);
+      allow list: if false; // Deny query scraping of user directories
+
+      allow create: if isOwnerVerified(userId) && 
+                       isValidId(userId) &&
+                       isValidUser(incoming()) && 
+                       incoming().createdAt == request.time;
+
+      allow update: if isOwnerVerified(userId) && 
+                       isValidId(userId) &&
+                       isValidUser(incoming()) && 
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['displayName']);
+
+      allow delete: if false; // Deny user profile deletion from client
+
+      // ANALYSES SUB-COLLECTION
+      match /analyses/{analysisId} {
+        allow get: if isOwner(userId);
+        allow list: if isOwner(userId); // Secure list queries restricted to owner
+
+        allow create: if isOwnerVerified(userId) && 
+                         isValidId(analysisId) && 
+                         isValidTimeframeAnalysis(incoming(), userId) && 
+                         incoming().createdAt == request.time;
+
+        allow update: if isOwnerVerified(userId) && 
+                         isValidId(analysisId) && 
+                         isValidTimeframeAnalysis(incoming(), userId) && 
+                         incoming().createdAt == existing().createdAt &&
+                         incoming().diff(existing()).affectedKeys().hasOnly(['summary']);
+
+        allow delete: if isOwnerVerified(userId) && isValidId(analysisId);
+      }
+
+      // CONFLUENCES SUB-COLLECTION
+      match /confluences/{confluenceId} {
+        allow get: if isOwner(userId);
+        allow list: if isOwner(userId); // Secure list queries restricted to owner
+
+        allow create: if isOwnerVerified(userId) && 
+                         isValidId(confluenceId) && 
+                         isValidConfluence(incoming(), userId) && 
+                         incoming().createdAt == request.time;
+
+        allow update: if isOwnerVerified(userId) && 
+                         isValidId(confluenceId) && 
+                         isValidConfluence(incoming(), userId) && 
+                         incoming().createdAt == existing().createdAt &&
+                         incoming().diff(existing()).affectedKeys().hasOnly(['dominantNarrative']);
+
+        allow delete: if isOwnerVerified(userId) && isValidId(confluenceId);
+      }
+    }
+  }
+}

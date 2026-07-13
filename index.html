@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ScreenSight Pro v4 — Real-time AI Screen Analyzer</title>
+
+    <!-- Google Fonts: Syne, DM Sans, JetBrains Mono -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=JetBrains+Mono:wght@400;500;700&family=Syne:ital,wght@0,700..800;1,700..800&display=swap" rel="stylesheet">
+
+    <!-- Preloaded External Libraries for performance -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js"></script>
+
+    <!-- Preload Tesseract.js offline OCR engine asynchronously -->
+    <script>
+      window._tesseractReady = import("https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.esm.min.js")
+        .then(m => { window.Tesseract = m.default || m; })
+        .catch(() => {
+          return new Promise((res, rej) => {
+            const s = document.createElement("script");
+            s.src = "https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js";
+            s.onload = res; s.onerror = rej;
+            document.head.appendChild(s);
+          });
+        });
+    </script>
+  </head>
+  <body class="bg-[#03070e] text-[#b8d0e8] selection:bg-[#00c8f0]/30 selection:text-white">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

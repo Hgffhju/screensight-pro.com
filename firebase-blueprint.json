@@ -1,0 +1,145 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile information",
+      "type": "object",
+      "properties": {
+        "email": {
+          "type": "string",
+          "description": "User email address"
+        },
+        "displayName": {
+          "type": "string",
+          "description": "User display name"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation timestamp"
+        }
+      },
+      "required": ["email", "displayName", "createdAt"]
+    },
+    "TimeframeAnalysis": {
+      "title": "TimeframeAnalysis",
+      "description": "Individual timeframe scanning analysis results",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "ID of the user who owns the analysis"
+        },
+        "timeframe": {
+          "type": "string",
+          "description": "Target timeframe slot (e.g. Daily, 4H)"
+        },
+        "bias": {
+          "type": "string",
+          "description": "Market bias (e.g. Bullish, Bearish, Neutral)"
+        },
+        "trend": {
+          "type": "string",
+          "description": "Trend/market structure"
+        },
+        "candlestickPattern": {
+          "type": "string",
+          "description": "Detected candlestick pattern"
+        },
+        "chartPattern": {
+          "type": "string",
+          "description": "Detected chart pattern"
+        },
+        "smcSignals": {
+          "type": "string",
+          "description": "Smart Money Concepts indicators"
+        },
+        "supportLevel": {
+          "type": "string",
+          "description": "Identified support price level"
+        },
+        "resistanceLevel": {
+          "type": "string",
+          "description": "Identified resistance price level"
+        },
+        "momentum": {
+          "type": "string",
+          "description": "Momentum reading"
+        },
+        "movingAverageAlignment": {
+          "type": "string",
+          "description": "Moving averages alignment status"
+        },
+        "summary": {
+          "type": "string",
+          "description": "Expert text summary"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Analysis capture timestamp"
+        }
+      },
+      "required": ["userId", "timeframe", "bias", "trend", "candlestickPattern", "chartPattern", "smcSignals", "summary", "createdAt"]
+    },
+    "Confluence": {
+      "title": "Confluence",
+      "description": "Synthesized top-down market confluence",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "ID of the user who owns the confluence"
+        },
+        "overallBias": {
+          "type": "string",
+          "description": "Dominant global bias"
+        },
+        "confluenceScore": {
+          "type": "number",
+          "description": "Confidence percentage score (0-100)"
+        },
+        "dominantNarrative": {
+          "type": "string",
+          "description": "Detailed multi-timeframe narrative summary"
+        },
+        "alignedTimeframes": {
+          "type": "array",
+          "description": "Timeframes aligned with the overall bias"
+        },
+        "conflictingTimeframes": {
+          "type": "array",
+          "description": "Timeframes that conflict with the overall bias"
+        },
+        "tacticalEntryPlan": {
+          "type": "object",
+          "description": "Entry trigger, Stop Loss, and Take Profit strategies"
+        },
+        "timeframeSuite": {
+          "type": "array",
+          "description": "List of active timeframe names captured in this confluence session"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Synthesis generation timestamp"
+        }
+      },
+      "required": ["userId", "overallBias", "confluenceScore", "dominantNarrative", "alignedTimeframes", "conflictingTimeframes", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Public profiles for verified users"
+    },
+    "/users/{userId}/analyses/{analysisId}": {
+      "schema": "TimeframeAnalysis",
+      "description": "Timeframe-specific candlestick and structure scans"
+    },
+    "/users/{userId}/confluences/{confluenceId}": {
+      "schema": "Confluence",
+      "description": "Top-down market synthesis reports and execution tactics"
+    }
+  }
+}
