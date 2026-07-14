@@ -5,29 +5,92 @@ import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
 
 import { requireAuth, AuthRequest } from "./src/middleware/auth.ts";
-import { getOrCreateUser, getUserConfluences, saveConfluenceSession, deleteConfluenceSession, recordPremiumPurchase, getUserPremiumPurchases } from "./src/db/queries.ts";
+import { getOrCreateUser, getUserConfluences, saveConfluenceSession, deleteConfluenceSession, recordPremiumPurchase, getUserPremiumPurchases, getVerifiedPurchaseByCode } from "./src/db/queries.ts";
 
 dotenv.config();
 
-let aiClient: GoogleGenAI | null = null;
-
-// Lazily initialize the Google Gen AI client with validation to prevent cold start crashes
-function getGeminiClient(): GoogleGenAI {
-  if (!aiClient) {
-    const key = process.env.GEMINI_API_KEY;
-    if (!key) {
-      throw new Error("GEMINI_API_KEY environment variable is not configured. Please add it via the secrets panel.");
-    }
-    aiClient = new GoogleGenAI({
-      apiKey: key,
-      httpOptions: {
-        headers: {
-          "User-Agent": "aistudio-build",
-        },
-      },
-    });
+// Dynamically initialize the Google Gen AI client based on custom key or fallback env variable
+function getGeminiClient(customKey?: string): GoogleGenAI {
+  const key = customKey || process.env.GEMINI_API_KEY;
+  if (!key) {
+    throw new Error("Google Gemini API Key is required. Please configure your own Google API Key in the Configurator Panel (Settings).");
   }
-  return aiClient;
+  return new GoogleGenAI({
+    apiKey: key,
+    httpOptions: {
+      headers: {
+        "User-Agent": "aistudio-build",
+      },
+    },
+  });
+}
+
+// Simple in-memory tracker for free trial usage to enforce 1-time limit tightly.
+const usedTrials = new Set<string>();
+
+function getTrialIdentifier(req: any, bodyUid?: string): string {
+  // Try to get UID first
+  const uid = bodyUid || req.user?.uid || req.body.uid;
+  if (uid) return `uid_${uid}`;
+  
+  // Try to get client-provided fingerprint/token
+  const clientToken = req.body.trialToken || req.headers["x-trial-token"];
+  if (clientToken) return `token_${clientToken}`;
+  
+  // Fallback to IP address
+  const ip = req.headers["x-forwarded-for"] || req.socket.remoteAddress || "unknown_ip";
+  return `ip_${ip}`;
+}
+
+function verifyAndConsumeTrial(identifier: string): { allowed: boolean; error?: string } {
+  if (!identifier) {
+    return { allowed: false, error: "Missing trial tracking identifier." };
+  }
+  const key = identifier.toLowerCase().trim();
+  if (usedTrials.has(key)) {
+    return { 
+      allowed: false, 
+      error: "Trial limit exceeded: You have already used your 1-time free trial analysis. Please subscribe by sending KES 300 to 0794300156 to unlock unlimited intelligence features." 
+    };
+  }
+  usedTrials.add(key);
+  return { allowed: true };
+}
+
+async function validateAccess(paymentCode: string | undefined, req: any, bodyUid?: string): Promise<{ allowed: boolean; error?: string; isTrial?: boolean }> {
+  if (!paymentCode) {
+    return { 
+      allowed: false, 
+      error: "Payment required: A valid 10-character M-Pesa transaction code is required as the activator to run analysis. Please complete payment in the Premium Strategies tab." 
+    };
+  }
+
+  const code = paymentCode.toUpperCase().trim();
+  if (code === "FREE_TRIAL") {
+    const trialId = getTrialIdentifier(req, bodyUid);
+    const trialCheck = verifyAndConsumeTrial(trialId);
+    if (!trialCheck.allowed) {
+      return { allowed: false, error: trialCheck.error };
+    }
+    return { allowed: true, isTrial: true };
+  }
+
+  if (code.length !== 10) {
+    return { 
+      allowed: false, 
+      error: "Payment required: A valid 10-character M-Pesa transaction code is required as the activator to run analysis. Please complete payment in the Premium Strategies tab." 
+    };
+  }
+
+  const verifiedPurchase = await getVerifiedPurchaseByCode(code);
+  if (!verifiedPurchase || verifiedPurchase.status !== "verified") {
+    return { 
+      allowed: false, 
+      error: "Invalid payment activator: The transaction code specified could not be verified or is not active. Please complete payment in the Premium Strategies tab." 
+    };
+  }
+
+  return { allowed: true, isTrial: false };
 }
 
 async function startServer() {
@@ -44,7 +107,7 @@ async function startServer() {
     res.json({
       status: "ok",
       aiLoaded: hasKey,
-      message: hasKey ? "Ready to track performance and analyze screen frames." : "Missing GEMINI_API_KEY.",
+      message: "Ready to track performance and analyze screen frames. Custom user-supplied Gemini API keys are fully supported and preferred.",
     });
   });
 
@@ -125,9 +188,13 @@ async function startServer() {
       if (!uid) {
         return res.status(401).json({ error: "Unauthorized: Missing user UID" });
       }
-      const { strategyId, phoneNumber, transactionCode, amountPaid } = req.body;
-      if (!strategyId || !phoneNumber || !transactionCode || !amountPaid) {
+      const { strategyId, phoneNumber, transactionCode, amountPaid, recipientPhone } = req.body;
+      if (!strategyId || !phoneNumber || !transactionCode || !amountPaid || !recipientPhone) {
         return res.status(400).json({ error: "Missing required checkout parameters." });
+      }
+
+      if (recipientPhone !== "0794300156") {
+        return res.status(400).json({ error: "Security Check Failed: Features can only be unlocked with verified M-Pesa payments sent directly to 0794300156." });
       }
 
       // Simple check for Kenyan mobile money transaction code (10 alphanumeric chars)
@@ -164,12 +231,18 @@ async function startServer() {
   // API Route: Unified Screen and Chart Visual Analyzer
   app.post("/api/analyze", async (req, res) => {
     try {
-      const { image, mode, detailLevel, ocrSnip, query, structured } = req.body;
+      const { image, mode, detailLevel, ocrSnip, query, structured, paymentCode } = req.body;
       if (!image) {
         return res.status(400).json({ error: "No screen capture frame (base64 image) provided." });
       }
 
-      const client = getGeminiClient();
+      const accessCheck = await validateAccess(paymentCode, req);
+      if (!accessCheck.allowed) {
+        return res.status(402).json({ error: accessCheck.error });
+      }
+
+      const customKey = req.headers["x-custom-api-key"] as string || req.body.customApiKey;
+      const client = getGeminiClient(customKey);
 
       // Configure system prompts based on targeted screen analytical category
       let systemPrompt = `You are ScreenSight Pro v4's elite computer vision and chart analyst.
@@ -306,7 +379,7 @@ You must apply the core rules of "The Candlestick Bible":
   // API Route: Per-Timeframe Multi-Discipline Analysis
   app.post("/api/analyze-timeframe", async (req, res) => {
     try {
-      const { image, timeframe, ocrSnip, query } = req.body;
+      const { image, timeframe, ocrSnip, query, paymentCode } = req.body;
       if (!image) {
         return res.status(400).json({ error: "No screen capture frame (base64 image) provided." });
       }
@@ -314,7 +387,13 @@ You must apply the core rules of "The Candlestick Bible":
         return res.status(400).json({ error: "No timeframe specified." });
       }
 
-      const client = getGeminiClient();
+      const accessCheck = await validateAccess(paymentCode, req);
+      if (!accessCheck.allowed) {
+        return res.status(402).json({ error: accessCheck.error });
+      }
+
+      const customKey = req.headers["x-custom-api-key"] as string || req.body.customApiKey;
+      const client = getGeminiClient(customKey);
       const model = "gemini-3.5-flash";
 
       const systemPrompt = `You are an elite quantitative technical analyst and market structure specialist evaluating a financial chart specifically on the ${timeframe} timeframe.
@@ -380,12 +459,18 @@ You MUST strictly output your analysis in JSON format adhering to the requested 
   // API Route: Top-Down Confluence Engine Correlation Pass
   app.post("/api/confluence", async (req, res) => {
     try {
-      const { timeframeAnalyses } = req.body;
+      const { timeframeAnalyses, paymentCode } = req.body;
       if (!timeframeAnalyses || !Array.isArray(timeframeAnalyses) || timeframeAnalyses.length < 2) {
         return res.status(400).json({ error: "At least 2 timeframe analyses are required to run the confluence engine." });
       }
 
-      const client = getGeminiClient();
+      const accessCheck = await validateAccess(paymentCode, req);
+      if (!accessCheck.allowed) {
+        return res.status(402).json({ error: accessCheck.error });
+      }
+
+      const customKey = req.headers["x-custom-api-key"] as string || req.body.customApiKey;
+      const client = getGeminiClient(customKey);
       const model = "gemini-3.5-flash";
 
       const systemPrompt = `You are ScreenSight Pro's ultimate Top-Down Confluence Engine.
@@ -451,7 +536,8 @@ You MUST strictly output your analysis in JSON format adhering to the requested 
         return res.status(400).json({ error: "Question is required." });
       }
 
-      const client = getGeminiClient();
+      const customKey = req.headers["x-custom-api-key"] as string || req.body.customApiKey;
+      const client = getGeminiClient(customKey);
       const model = "gemini-3.5-flash";
 
       // Build system instruction grounding

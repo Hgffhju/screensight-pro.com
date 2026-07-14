@@ -25,6 +25,8 @@ interface PremiumStrategiesPanelProps {
   currentUser: any;
   onAddLog: (msg: string, type: "success" | "error" | "info" | "high" | "trading") => void;
   mtfConfluenceResult: any;
+  purchases: any[];
+  onPurchaseSuccess: () => void;
 }
 
 interface PremiumStrategy {
@@ -45,11 +47,12 @@ interface PremiumStrategy {
 export const PremiumStrategiesPanel: React.FC<PremiumStrategiesPanelProps> = ({
   currentUser,
   onAddLog,
-  mtfConfluenceResult
+  mtfConfluenceResult,
+  purchases,
+  onPurchaseSuccess
 }) => {
   const [isOpen, setIsOpen] = useState<boolean>(true);
   const [activeTab, setActiveTab] = useState<"catalog" | "my_hub">("catalog");
-  const [purchases, setPurchases] = useState<any[]>([]);
   const [loadingPurchases, setLoadingPurchases] = useState<boolean>(false);
   const [selectedStrategy, setSelectedStrategy] = useState<PremiumStrategy | null>(null);
   
@@ -131,33 +134,37 @@ export const PremiumStrategiesPanel: React.FC<PremiumStrategiesPanelProps> = ({
         "Exit 80% of volume if price crosses back over the 20-period middle moving average.",
         "Strictly invalidate the trade if volume drops below average during the first three breakout candles."
       ]
+    },
+    {
+      id: "strat_analysis_pass",
+      name: "AI Scanner & Confluence Activation Pass",
+      priceKes: 300,
+      winRate: "100%",
+      profitFactor: "Unlimited",
+      timeframe: "All Timeframes",
+      shortDesc: "Complete top-down analysis, single-frame scanner, and multi-timeframe confluence activator. Direct payment code unlocks full generation power.",
+      detailedDesc: "Unlocks the full computer vision chart scanner, per-timeframe scanning capabilities, and the top-down confluence model. The unique 10-character M-Pesa transaction code received after completing this payment acts as your lifetime or single-session activator code for analysis generation.",
+      indicatorChecklist: [
+        "Provides 10-digit M-Pesa activator code to bypass the payment check on any Gemini analysis trigger",
+        "Activates unified single-screen chart/dashboard analyzer model",
+        "Activates per-timeframe multi-discipline visual scan scans",
+        "Activates macro top-down multi-timeframe confluence synthesizer engine"
+      ],
+      entryTrigger: "Purchase this pass using Pochi la Biashara and enter the transaction code in the activator input on any analysis panel.",
+      riskManagement: "Keep your transaction activator code secure as it acts as your personal API generation activator.",
+      executionRules: [
+        "Select your active transaction code from the dropdown or paste it manually in the 'Activator Code' field before triggering any analysis.",
+        "Ensure your account is signed in to synchronize active activator codes across browsers.",
+        "No expiration limits. Re-use your active verified payment transaction code at any time."
+      ]
     }
   ];
 
-  // Fetch purchases on mount and when currentUser changes
-  const fetchUserPurchases = async () => {
-    if (!currentUser) return;
-    setLoadingPurchases(true);
-    try {
-      const token = await currentUser.getIdToken();
-      const res = await fetch("/api/premium/purchases", {
-        headers: {
-          Authorization: `Bearer ${token}`
-        }
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setPurchases(data.purchases || []);
-      }
-    } catch (err) {
-      console.error("Error retrieving user purchases:", err);
-    } finally {
-      setLoadingPurchases(false);
-    }
-  };
-
+  // Trigger initial parent fetch if logged in
   useEffect(() => {
-    fetchUserPurchases();
+    if (currentUser) {
+      onPurchaseSuccess();
+    }
   }, [currentUser]);
 
   // Is strategy unlocked?
@@ -194,7 +201,8 @@ export const PremiumStrategiesPanel: React.FC<PremiumStrategiesPanelProps> = ({
         strategyId: checkoutStrategyId,
         phoneNumber: payerPhone.trim(),
         transactionCode: transactionCode.toUpperCase().trim(),
-        amountPaid: strategy.priceKes
+        amountPaid: strategy.priceKes,
+        recipientPhone: "0794300156"
       };
 
       const res = await fetch("/api/premium/purchase", {
@@ -220,7 +228,7 @@ export const PremiumStrategiesPanel: React.FC<PremiumStrategiesPanelProps> = ({
         setPayerPhone("");
         setTransactionCode("");
         setCheckoutSuccess(false);
-        fetchUserPurchases();
+        onPurchaseSuccess();
         setActiveTab("my_hub");
       }, 2000);
 

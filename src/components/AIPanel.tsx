@@ -10,6 +10,13 @@ interface AIPanelProps {
   isCapturing: boolean;
   paused: boolean;
   onAiAnalysisCompleted: (text: string) => void;
+  purchases: any[];
+  activePaymentCode: string;
+  setActivePaymentCode: (code: string) => void;
+  currentUser: any;
+  onTriggerVerifyPayment: () => void;
+  trialUsed: boolean;
+  onUseTrial: () => void;
 }
 
 export const AIPanel: React.FC<AIPanelProps> = ({
@@ -20,6 +27,13 @@ export const AIPanel: React.FC<AIPanelProps> = ({
   isCapturing,
   paused,
   onAiAnalysisCompleted,
+  purchases,
+  activePaymentCode,
+  setActivePaymentCode,
+  currentUser,
+  onTriggerVerifyPayment,
+  trialUsed,
+  onUseTrial,
 }) => {
   const [aiFocus, setAiFocus] = useState<string>("trading");
   const [structuredOutput, setStructuredOutput] = useState<boolean>(true);
@@ -81,6 +95,12 @@ export const AIPanel: React.FC<AIPanelProps> = ({
     }
   }, [qaMessages]);
 
+  const isPaymentVerified = (code: string) => {
+    if (!code) return false;
+    const formatted = code.toUpperCase().trim();
+    return purchases.some((p: any) => p.transactionCode === formatted && p.status === "verified");
+  };
+
   const triggerQueryAnalysis = async () => {
     if (!isCapturing) {
       onAddLog("Start canvas capture first before calling Gemini.", "error");
@@ -91,6 +111,22 @@ export const AIPanel: React.FC<AIPanelProps> = ({
     if (!screenshot) {
       onAddLog("Visual workspace frame not loaded yet.", "error");
       return;
+    }
+
+    let paymentToPass = activePaymentCode ? activePaymentCode.toUpperCase().trim() : "";
+    let isTrialRun = false;
+
+    if (!isPaymentVerified(activePaymentCode)) {
+      if (!trialUsed) {
+        onAddLog("Free Trial: Running 1-time limited free trial analysis scan...", "info");
+        paymentToPass = "FREE_TRIAL";
+        isTrialRun = true;
+      } else {
+        onAddLog("Payment Required: Please select or enter a valid and verified 10-character M-Pesa transaction code as your activator to run analysis. Your free trial has already been used.", "error");
+        setIsDrawing(false);
+        onTriggerVerifyPayment();
+        return;
+      }
     }
 
     const tStart = performance.now();
@@ -106,23 +142,31 @@ export const AIPanel: React.FC<AIPanelProps> = ({
         adjustedFocusPrompt = customMode.prompt;
       }
 
-      onAddLog(`Interrogating Gemini visual system [Mode: ${aiFocus}]`, "info");
+      onAddLog(`Interrogating Gemini visual system with payment activator [Mode: ${aiFocus}]`, "info");
 
       const response = await fetch("/api/analyze", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+          "x-custom-api-key": localStorage.getItem("custom_gemini_api_key") || ""
+        },
         body: JSON.stringify({
           image: screenshot,
           mode: aiFocus.startsWith("custom_") ? "custom" : aiFocus,
           ocrSnip: ocrText.slice(0, 700),
           query: customMode ? customMode.prompt : undefined,
           structured: structuredOutput,
+          paymentCode: paymentToPass
         }),
       });
 
       if (!response.ok) {
         const errJson = await response.json().catch(() => ({}));
         throw new Error(errJson.error || `HTTP Response ${response.status}`);
+      }
+
+      if (isTrialRun) {
+        onUseTrial();
       }
 
       const resData = await response.json();
@@ -178,6 +222,29 @@ export const AIPanel: React.FC<AIPanelProps> = ({
     const question = qaInput.trim();
     if (!question) return;
 
+    if (!isPaymentVerified(activePaymentCode)) {
+      onAddLog("Payment Required: Please select or enter a valid and verified 10-character M-Pesa transaction code as your activator to use the chat companion.", "error");
+      setQaMessages((prev) => [
+        ...prev,
+        {
+          id: Math.random().toString(),
+          role: "user",
+          content: question,
+          timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+          hasFrame: false
+        },
+        {
+          id: Math.random().toString(),
+          role: "assistant",
+          content: "⚠ **Payment Required**: AI Companion chat is locked. Please activate your session in the 'Income Generating Strategies' panel using a verified M-Pesa transaction code.",
+          timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        }
+      ]);
+      setQaInput("");
+      onTriggerVerifyPayment();
+      return;
+    }
+
     setQaInput("");
     setQaSending(true);
 
@@ -208,7 +275,10 @@ export const AIPanel: React.FC<AIPanelProps> = ({
 
       const response = await fetch("/api/chat", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+          "x-custom-api-key": localStorage.getItem("custom_gemini_api_key") || ""
+        },
         body: JSON.stringify({
           question,
           history: formattedHistory,
@@ -287,6 +357,69 @@ export const AIPanel: React.FC<AIPanelProps> = ({
             Analyze Now
           </button>
         </div>
+      </div>
+
+      {/* Payment Activator Input/Select */}
+      <div className="p-2 border border-[#9d78f8]/20 bg-[#090f1e]/80 rounded flex flex-col gap-1.5">
+        <div className="flex justify-between items-center text-[9px] font-mono text-[#7a98b4] uppercase tracking-wide">
+          <span className="flex items-center gap-1">
+            <span className="w-1.5 h-1.5 rounded-full bg-[#9d78f8] animate-ping" />
+            Analysis Activator M-Pesa Code
+          </span>
+          {isPaymentVerified(activePaymentCode) ? (
+            <span className="text-[#00df6e] font-bold">● Subscribed</span>
+          ) : !trialUsed ? (
+            <span className="text-[#00df6e] font-bold">● 1 Free Trial Remaining</span>
+          ) : (
+            <span className="text-[#f03060] font-bold">● Trial Expired / Activation Required</span>
+          )}
+        </div>
+        
+        <div className="flex gap-1.5">
+          {purchases.filter(p => p.status === "verified").length > 0 ? (
+            <select
+              value={activePaymentCode}
+              onChange={(e) => setActivePaymentCode(e.target.value.toUpperCase().trim())}
+              className="flex-grow bg-black border border-[#152236] px-2 py-1 rounded text-[10.5px] font-mono text-white focus:outline-none focus:border-[#9d78f8]/50 cursor-pointer"
+            >
+              <option value="">-- Select Active Payment Code --</option>
+              {purchases.filter(p => p.status === "verified").map((p) => (
+                <option key={p.transactionCode} value={p.transactionCode}>
+                  {p.transactionCode} ({p.strategyId === "strat_analysis_pass" ? "Analysis Pass" : "Premium Strategy"})
+                </option>
+              ))}
+            </select>
+          ) : (
+            <input
+              type="text"
+              placeholder="e.g. SDR2A349DF"
+              maxLength={10}
+              value={activePaymentCode}
+              onChange={(e) => setActivePaymentCode(e.target.value.toUpperCase().trim())}
+              className="flex-grow bg-black border border-[#152236] px-2 py-1 rounded text-[10.5px] font-mono text-white placeholder-gray-600 focus:outline-none focus:border-[#f03060]/50"
+            />
+          )}
+          
+          <button
+            onClick={() => {
+              if (activePaymentCode.length === 10) {
+                onAddLog(`Activator key set: ${activePaymentCode}. Interrogator ready.`, "success");
+              } else {
+                onAddLog(`Invalid payment code. Must be 10 alphanumeric characters.`, "error");
+              }
+            }}
+            className="px-2.5 py-1 bg-[#9d78f8]/10 hover:bg-[#9d78f8]/20 border border-[#9d78f8]/30 rounded text-[#9d78f8] text-[9.5px] font-bold uppercase cursor-pointer"
+          >
+            Apply
+          </button>
+        </div>
+        <p className="text-[8.5px] text-[#4a6580] leading-tight">
+          {trialUsed ? (
+            <span>Your free trial has expired. Pay <strong className="text-white">KES 300</strong> to <strong className="text-white">0794300156</strong> in the <strong>Income Generating Strategies</strong> tab, and enter your 10-char receipt code above to continue.</span>
+          ) : (
+            <span>You have <strong className="text-[#00df6e]">1 FREE trial scan</strong> remaining. After that, subscription is required to run further premium analyses.</span>
+          )}
+        </p>
       </div>
 
       {/* Auto analyze ticking widgets */}

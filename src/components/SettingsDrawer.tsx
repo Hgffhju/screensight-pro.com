@@ -1,6 +1,16 @@
 import React, { useState } from "react";
-import { Settings, X, Plus, AlertTriangle, HelpCircle, Shield, Link, FileHeart, Sliders } from "lucide-react";
+import { Settings, X, Plus, AlertTriangle, HelpCircle, Shield, Link, FileHeart, Sliders, Key, Bookmark } from "lucide-react";
 import { FocusMode, WebhookConfig, LogEntry } from "../types";
+
+export interface RoiPreset {
+  id: string;
+  name: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  isDefault?: boolean;
+}
 
 interface SettingsDrawerProps {
   isOpen: boolean;
@@ -62,6 +72,72 @@ export const SettingsDrawer: React.FC<SettingsDrawerProps> = ({
   const [webhookUrl, setWebhookUrl] = useState<string>("");
   const [webhookTrigger, setWebhookTrigger] = useState<WebhookConfig["trigger"]>("keyword");
 
+  const [apiKey, setApiKey] = useState<string>(() => localStorage.getItem("custom_gemini_api_key") || "");
+
+  const handleSaveApiKey = () => {
+    localStorage.setItem("custom_gemini_api_key", apiKey.trim());
+    onAddLog("Personal Gemini API Key saved successfully to secure local storage.", "success");
+  };
+
+  const handleClearApiKey = () => {
+    localStorage.removeItem("custom_gemini_api_key");
+    setApiKey("");
+    onAddLog("Personal Gemini API Key removed successfully.", "info");
+  };
+
+  // ROI Presets state & handlers
+  const [presetNameInput, setPresetNameInput] = useState<string>("");
+  const [roiPresets, setRoiPresets] = useState<RoiPreset[]>(() => {
+    const saved = localStorage.getItem("roi_presets");
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch (_) {}
+    }
+    return [
+      { id: "def-fullscreen", name: "Full Screen Overlay", x: 0, y: 0, w: 1280, h: 720, isDefault: true },
+      { id: "def-centerchart", name: "Main Central Chart Area", x: 140, y: 50, w: 1000, h: 500, isDefault: true },
+      { id: "def-orderbook", name: "Right-hand Order Book", x: 1000, y: 50, w: 280, h: 620, isDefault: true },
+      { id: "def-lowerindicators", name: "Lower Indicators Panel", x: 140, y: 550, w: 1000, h: 140, isDefault: true },
+    ];
+  });
+
+  const handleSaveRoiPreset = () => {
+    const name = presetNameInput.trim();
+    if (!name) {
+      onAddLog("Please provide a name for your custom ROI preset.", "error");
+      return;
+    }
+    const newPreset: RoiPreset = {
+      id: "preset-" + Date.now(),
+      name,
+      x: roiX,
+      y: roiY,
+      w: roiW,
+      h: roiH,
+    };
+    const updated = [...roiPresets, newPreset];
+    setRoiPresets(updated);
+    localStorage.setItem("roi_presets", JSON.stringify(updated));
+    setPresetNameInput("");
+    onAddLog(`Custom ROI preset "${name}" saved successfully.`, "success");
+  };
+
+  const handleDeleteRoiPreset = (id: string, name: string) => {
+    const updated = roiPresets.filter(p => p.id !== id);
+    setRoiPresets(updated);
+    localStorage.setItem("roi_presets", JSON.stringify(updated));
+    onAddLog(`ROI preset "${name}" removed.`, "info");
+  };
+
+  const handleApplyRoiPreset = (preset: RoiPreset) => {
+    onChangeRoiCoord("x", preset.x);
+    onChangeRoiCoord("y", preset.y);
+    onChangeRoiCoord("w", preset.w);
+    onChangeRoiCoord("h", preset.h);
+    onAddLog(`Switched to ROI preset "${preset.name}".`, "info");
+  };
+
   const handleKeywordCommit = () => {
     const val = keywordInput.trim().toLowerCase();
     if (!val) return;
@@ -121,6 +197,42 @@ export const SettingsDrawer: React.FC<SettingsDrawerProps> = ({
         {/* Configurations content feed */}
         <div className="flex-grow p-4 overflow-y-auto flex flex-col gap-5 text-xs text-[#b8d0e8] select-none">
           
+          {/* Section: Custom Gemini API Key */}
+          <div className="flex flex-col gap-2.5 border-b border-[#152236] pb-4">
+            <span className="text-[9px] font-bold text-[#4a6580] uppercase tracking-widest flex items-center gap-1 font-mono">
+              <Key className="w-3.5 h-3.5 text-[#00c8f0]" />
+              Personal Google API Keys
+            </span>
+            <p className="text-[10px] text-[#7a98b4] leading-relaxed">
+              Input your personal Gemini API Key below. This guarantees you do not share developer secrets and use your own limits.
+            </p>
+            <div className="flex flex-col gap-1.5 mt-1">
+              <input
+                type="password"
+                placeholder="AI Studio API Key (AIzaSy...)"
+                value={apiKey}
+                onChange={(e) => setApiKey(e.target.value)}
+                className="w-full bg-[#090f1e] border border-[#152236] rounded p-2 text-[10.5px] text-[#00c8f0] focus:outline-none focus:border-[#00c8f0] font-mono"
+              />
+              <div className="flex gap-2">
+                <button
+                  onClick={handleSaveApiKey}
+                  className="flex-1 py-1.5 bg-[#00c8f0]/10 hover:bg-[#00c8f0]/20 border border-[#00c8f0]/35 rounded text-[#00c8f0] font-bold text-[10px] tracking-wider uppercase transition cursor-pointer"
+                >
+                  Save Key
+                </button>
+                {localStorage.getItem("custom_gemini_api_key") && (
+                  <button
+                    onClick={handleClearApiKey}
+                    className="py-1.5 px-3 bg-red-950/20 hover:bg-red-950/40 border border-red-500/30 rounded text-red-400 font-bold text-[10px] tracking-wider uppercase transition cursor-pointer"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+
           {/* Section: OCR configurations */}
           <div className="flex flex-col gap-2.5 border-b border-[#152236] pb-4">
             <span className="text-[9px] font-bold text-[#4a6580] uppercase tracking-widest flex items-center gap-1 font-mono">
@@ -177,48 +289,119 @@ export const SettingsDrawer: React.FC<SettingsDrawerProps> = ({
             </div>
 
             {roiEnabled && (
-              <div className="grid grid-cols-2 gap-2 mt-1 p-2 bg-[#090f1e] border border-[#152236] rounded font-mono text-[#7a98b4]">
-                <div>
-                  <label className="text-[8px] uppercase text-[#4a6580]">Left (X)</label>
-                  <input
-                    type="number"
-                    value={roiX}
-                    min={0}
-                    onChange={(e) => onChangeRoiCoord("x", parseInt(e.target.value) || 0)}
-                    className="w-full bg-black border border-[#152236] p-1 px-1.5 rounded text-[10px] focus:outline-none focus:border-[#00c8f0] text-white"
-                  />
+              <>
+                <div className="grid grid-cols-2 gap-2 mt-1 p-2 bg-[#090f1e] border border-[#152236] rounded font-mono text-[#7a98b4]">
+                  <div>
+                    <label className="text-[8px] uppercase text-[#4a6580]">Left (X)</label>
+                    <input
+                      type="number"
+                      value={roiX}
+                      min={0}
+                      onChange={(e) => onChangeRoiCoord("x", parseInt(e.target.value) || 0)}
+                      className="w-full bg-black border border-[#152236] p-1 px-1.5 rounded text-[10px] focus:outline-none focus:border-[#00c8f0] text-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[8px] uppercase text-[#4a6580]">Top (Y)</label>
+                    <input
+                      type="number"
+                      value={roiY}
+                      min={0}
+                      onChange={(e) => onChangeRoiCoord("y", parseInt(e.target.value) || 0)}
+                      className="w-full bg-black border border-[#152236] p-1 px-1.5 rounded text-[10px] focus:outline-none focus:border-[#00c8f0] text-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[8px] uppercase text-[#4a6580]">Width</label>
+                    <input
+                      type="number"
+                      value={roiW}
+                      min={10}
+                      onChange={(e) => onChangeRoiCoord("w", parseInt(e.target.value) || 1280)}
+                      className="w-full bg-black border border-[#152236] p-1 px-1.5 rounded text-[10px] focus:outline-none focus:border-[#00c8f0] text-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[8px] uppercase text-[#4a6580]">Height</label>
+                    <input
+                      type="number"
+                      value={roiH}
+                      min={10}
+                      onChange={(e) => onChangeRoiCoord("h", parseInt(e.target.value) || 720)}
+                      className="w-full bg-black border border-[#152236] p-1 px-1.5 rounded text-[10px] focus:outline-none focus:border-[#00c8f0] text-white"
+                    />
+                  </div>
                 </div>
-                <div>
-                  <label className="text-[8px] uppercase text-[#4a6580]">Top (Y)</label>
-                  <input
-                    type="number"
-                    value={roiY}
-                    min={0}
-                    onChange={(e) => onChangeRoiCoord("y", parseInt(e.target.value) || 0)}
-                    className="w-full bg-black border border-[#152236] p-1 px-1.5 rounded text-[10px] focus:outline-none focus:border-[#00c8f0] text-white"
-                  />
+
+                {/* ROI Presets switching and management */}
+                <div className="flex flex-col gap-2 mt-2 border-t border-[#152236]/35 pt-2">
+                  <span className="text-[8.5px] font-bold text-[#4a6580] uppercase tracking-wider font-mono flex items-center gap-1">
+                    <Bookmark className="w-3 h-3 text-[#00c8f0]" />
+                    ROI Layout Presets
+                  </span>
+
+                  {/* Presets List */}
+                  <div className="flex flex-col gap-1 max-h-28 overflow-y-auto border border-[#152236]/40 bg-[#090f1e] rounded p-1.5">
+                    {roiPresets.map((preset) => {
+                      const isCurrentlyActive = 
+                        roiX === preset.x && 
+                        roiY === preset.y && 
+                        roiW === preset.w && 
+                        roiH === preset.h;
+                      return (
+                        <div 
+                          key={preset.id} 
+                          className={`flex justify-between items-center text-[10px] p-1 px-1.5 rounded transition cursor-pointer ${
+                            isCurrentlyActive 
+                              ? "bg-[#00c8f0]/10 border border-[#00c8f0]/30 text-[#00c8f0]" 
+                              : "bg-[#0b1322] hover:bg-[#152236]/50 text-[#a8c0d8]"
+                          }`}
+                          onClick={() => handleApplyRoiPreset(preset)}
+                        >
+                          <div className="flex flex-col truncate flex-grow">
+                            <span className="font-bold truncate text-[9.5px]">
+                              {isCurrentlyActive && "✓ "}{preset.name}
+                            </span>
+                            <span className="text-[8px] text-[#4a6580] font-mono">
+                              X:{preset.x} Y:{preset.y} W:{preset.w} H:{preset.h}
+                            </span>
+                          </div>
+                          {!preset.isDefault && (
+                            <button 
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDeleteRoiPreset(preset.id, preset.name);
+                              }} 
+                              className="text-[#4a6580] hover:text-[#f03060] font-bold p-1 ml-1"
+                              title="Delete Preset"
+                            >
+                              ✕
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Save current coordinates as a new preset */}
+                  <div className="flex gap-1.5">
+                    <input
+                      type="text"
+                      placeholder="Name current ROI layout..."
+                      value={presetNameInput}
+                      onChange={(e) => setPresetNameInput(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && handleSaveRoiPreset()}
+                      className="flex-grow bg-black border border-[#152236] rounded px-2 py-1 text-[10px] text-white focus:outline-none focus:border-[#00c8f0]"
+                    />
+                    <button 
+                      onClick={handleSaveRoiPreset} 
+                      className="bg-[#0b1322] border border-[#152236] hover:border-[#00c8f0]/40 text-[#00c8f0] px-2 rounded shrink-0 font-bold text-[9.5px] transition hover:bg-[#00c8f0]/5 cursor-pointer"
+                    >
+                      Save
+                    </button>
+                  </div>
                 </div>
-                <div>
-                  <label className="text-[8px] uppercase text-[#4a6580]">Width</label>
-                  <input
-                    type="number"
-                    value={roiW}
-                    min={10}
-                    onChange={(e) => onChangeRoiCoord("w", parseInt(e.target.value) || 1280)}
-                    className="w-full bg-black border border-[#152236] p-1 px-1.5 rounded text-[10px] focus:outline-none focus:border-[#00c8f0] text-white"
-                  />
-                </div>
-                <div>
-                  <label className="text-[8px] uppercase text-[#4a6580]">Height</label>
-                  <input
-                    type="number"
-                    value={roiH}
-                    min={10}
-                    onChange={(e) => onChangeRoiCoord("h", parseInt(e.target.value) || 720)}
-                    className="w-full bg-black border border-[#152236] p-1 px-1.5 rounded text-[10px] focus:outline-none focus:border-[#00c8f0] text-white"
-                  />
-                </div>
-              </div>
+              </>
             )}
           </div>
 

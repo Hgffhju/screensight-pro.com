@@ -27,13 +27,15 @@ import {
   Database,
   Save,
   History,
-  User as UserIcon
+  User as UserIcon,
+  ShieldAlert,
+  ExternalLink
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 
 import { auth, db, googleProvider, handleFirestoreError, OperationType } from "./firebase";
 import { signInWithPopup, signOut, onAuthStateChanged, User as FirebaseUser, GoogleAuthProvider } from "firebase/auth";
-import { doc, setDoc, getDoc, collection, addDoc, getDocs, query, where, orderBy, deleteDoc, Timestamp } from "firebase/firestore";
+import { doc, setDoc, getDoc, collection, addDoc, getDocs, query, where, orderBy, deleteDoc, Timestamp, serverTimestamp } from "firebase/firestore";
 
 import { LogEntry, FocusMode, WebhookConfig } from "./types";
 import { PerformanceCharts } from "./components/PerformanceCharts";
@@ -46,6 +48,7 @@ import { PremiumStrategiesPanel } from "./components/PremiumStrategiesPanel";
 import { SettingsDrawer } from "./components/SettingsDrawer";
 import { CloudHistoryDrawer } from "./components/CloudHistoryDrawer";
 import { MultiTimeframeEngine, TimeframeAnalysis, ConfluenceResult } from "./components/MultiTimeframeEngine";
+import { VerifyPaymentModal } from "./components/VerifyPaymentModal";
 
 export default function App() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -1086,6 +1089,19 @@ export default function App() {
     } catch (err: any) {
       console.error(err);
       addLog(`Stream monitoring rejection: ${err.message}`, "error");
+      const errMsg = String(err.message || "").toLowerCase();
+      const errName = String(err.name || "");
+      if (
+        errName === "NotAllowedError" ||
+        errName === "SecurityError" ||
+        errMsg.includes("disallowed") ||
+        errMsg.includes("permission") ||
+        errMsg.includes("display-capture") ||
+        errMsg.includes("media")
+      ) {
+        setCaptureError(err.message || String(err));
+        setShowPermissionOverlay(true);
+      }
     }
   };
 
@@ -1327,6 +1343,50 @@ export default function App() {
   const [cloudConfluences, setCloudConfluences] = useState<any[]>([]);
   const [isHistoryOpen, setIsHistoryOpen] = useState<boolean>(false);
 
+  // Global payment activation state
+  const [purchases, setPurchases] = useState<any[]>([]);
+  const [activePaymentCode, setActivePaymentCode] = useState<string>("");
+  const [isVerifyPaymentOpen, setIsVerifyPaymentOpen] = useState<boolean>(false);
+
+  // Trial tracking state (only 1-time tight trial allowed)
+  const [trialUsed, setTrialUsed] = useState<boolean>(() => {
+    return localStorage.getItem("trading_intelligence_trial_used") === "true";
+  });
+
+  const handleUseTrial = () => {
+    setTrialUsed(true);
+    localStorage.setItem("trading_intelligence_trial_used", "true");
+    addLog("🔒 Free Trial used! Subscription via verified M-Pesa payment is now required to run further premium analyses.", "high");
+  };
+
+  const fetchGlobalPurchases = async (user: FirebaseUser) => {
+    try {
+      const token = await user.getIdToken();
+      const res = await fetch("/api/premium/purchases", {
+        headers: {
+          "Authorization": `Bearer ${token}`
+        }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const list = data.purchases || [];
+        setPurchases(list);
+        
+        // Auto-select first verified activator transaction code if none chosen yet
+        const verified = list.filter((p: any) => p.status === "verified");
+        if (verified.length > 0) {
+          setActivePaymentCode((prev) => prev || verified[0].transactionCode);
+        }
+      }
+    } catch (err) {
+      console.error("Error fetching purchases globally in App.tsx:", err);
+    }
+  };
+
+  // Capture Permissions & Iframe Security error state
+  const [captureError, setCaptureError] = useState<string | null>(null);
+  const [showPermissionOverlay, setShowPermissionOverlay] = useState<boolean>(false);
+
   // Handle Auth Changes
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
@@ -1349,13 +1409,44 @@ export default function App() {
           if (syncRes.ok) {
             addLog("Database: Synced trader profile securely to Cloud SQL.", "success");
           }
+
+          // Sync profile to Firebase Firestore (conforming exactly to the User blueprint entity)
+          try {
+            const userRef = doc(db, "users", user.uid);
+            const userSnap = await getDoc(userRef);
+            if (!userSnap.exists()) {
+              await setDoc(userRef, {
+                email: user.email || "",
+                displayName: user.displayName || "Anonymous Trader",
+                createdAt: serverTimestamp()
+              });
+              addLog("Firebase: Created user profile in Firestore.", "success");
+            } else {
+              const existingData = userSnap.data();
+              if (existingData.displayName !== (user.displayName || "Anonymous Trader")) {
+                await setDoc(userRef, {
+                  email: existingData.email,
+                  displayName: user.displayName || "Anonymous Trader",
+                  createdAt: existingData.createdAt
+                });
+                addLog("Firebase: Synced display name to Firestore.", "success");
+              }
+            }
+          } catch (fsErr: any) {
+            handleFirestoreError(fsErr, OperationType.WRITE, `users/${user.uid}`);
+          }
+
           // Fetch their past confluence reports from Cloud SQL
           fetchCloudHistory(user);
+          // Fetch their premium strategy activator codes
+          fetchGlobalPurchases(user);
         } catch (error: any) {
           addLog(`Database Profile sync failed: ${error.message}`, "error");
         }
       } else {
         setCloudConfluences([]);
+        setPurchases([]);
+        setActivePaymentCode("");
         setGmailAccessToken(null);
       }
     });
@@ -1502,6 +1593,46 @@ export default function App() {
         throw new Error("Failed to save session to Cloud SQL.");
       }
 
+      // 3. Save to Firebase Firestore to fulfill the master Firebase integration design
+      try {
+        // A. Save individual timeframe analyses to Firestore subcollection
+        for (const analysis of analysesList) {
+          const analysisRef = doc(db, "users", currentUser.uid, "analyses", analysis.id);
+          await setDoc(analysisRef, {
+            userId: currentUser.uid,
+            timeframe: analysis.timeframe,
+            bias: analysis.bias,
+            trend: analysis.trend,
+            candlestickPattern: analysis.candlestickPattern,
+            chartPattern: analysis.chartPattern,
+            smcSignals: analysis.smcSignals,
+            supportLevel: analysis.supportLevel,
+            resistanceLevel: analysis.resistanceLevel,
+            momentum: analysis.momentum,
+            movingAverageAlignment: analysis.movingAverageAlignment,
+            summary: (analysis.summary || "").slice(0, 4000),
+            createdAt: serverTimestamp()
+          });
+        }
+
+        // B. Save master confluence record to Firestore subcollection
+        const confluenceRef = doc(db, "users", currentUser.uid, "confluences", confluenceId);
+        await setDoc(confluenceRef, {
+          userId: currentUser.uid,
+          overallBias: confluencePayload.overallBias,
+          confluenceScore: confluencePayload.confluenceScore,
+          dominantNarrative: (confluencePayload.dominantNarrative || "").slice(0, 8000),
+          alignedTimeframes: confluencePayload.alignedTimeframes,
+          conflictingTimeframes: confluencePayload.conflictingTimeframes,
+          tacticalEntryPlan: confluencePayload.tacticalEntryPlan,
+          timeframeSuite: confluencePayload.timeframeSuite,
+          createdAt: serverTimestamp()
+        });
+        addLog("Firebase: Saved and synced session data to Firestore securely.", "success");
+      } catch (fsErr: any) {
+        handleFirestoreError(fsErr, OperationType.WRITE, `users/${currentUser.uid}/confluences/${confluenceId}`);
+      }
+
       addLog(`Session securely saved. Report UID: ${confluenceId}`, "success");
       
       // Refresh Cloud SQL history list
@@ -1517,6 +1648,16 @@ export default function App() {
   const deleteCloudConfluence = async (confId: string) => {
     if (!currentUser) return;
     try {
+      // 1. Delete from Firebase Firestore
+      try {
+        const confluenceRef = doc(db, "users", currentUser.uid, "confluences", confId);
+        await deleteDoc(confluenceRef);
+        addLog("Firebase: Deleted confluence record from Firestore.", "success");
+      } catch (fsErr: any) {
+        handleFirestoreError(fsErr, OperationType.DELETE, `users/${currentUser.uid}/confluences/${confId}`);
+      }
+
+      // 2. Delete from Cloud SQL
       const token = await currentUser.getIdToken();
       const res = await fetch(`/api/confluences/${confId}`, {
         method: "DELETE",
@@ -1832,6 +1973,77 @@ export default function App() {
             onToggleDiff={() => setDiffOverlayActive((prev) => !prev)}
             onSaveScreenshot={handleSaveScreenshot}
           />
+
+          {showPermissionOverlay && (
+            <div className="absolute inset-0 bg-[#03070e]/95 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+              <div className="max-w-md w-full bg-[#090f1e] border border-[#f03060]/30 rounded-xl p-5 shadow-2xl shadow-[#f03060]/5 flex flex-col gap-4">
+                <div className="flex items-start gap-3">
+                  <div className="w-10 h-10 rounded-lg bg-[#f03060]/10 border border-[#f03060]/30 flex items-center justify-center shrink-0">
+                    <ShieldAlert className="w-5 h-5 text-[#f03060]" />
+                  </div>
+                  <div>
+                    <h3 className="font-syne font-black text-white text-[13px] uppercase tracking-wider">
+                      Sandbox Screen Capture Disallowed
+                    </h3>
+                    <p className="text-[11px] text-[#4a6580] font-mono mt-0.5">
+                      Permissions Policy Error detected
+                    </p>
+                  </div>
+                </div>
+
+                <div className="text-[11px] text-[#b8d0e8] leading-relaxed flex flex-col gap-2.5">
+                  <p>
+                    The browser has blocked screen capture (<code className="bg-black/40 text-[#f03060] px-1 py-0.5 rounded font-mono font-bold text-[10px]">getDisplayMedia</code>) because this application is running inside a secure development <code className="text-white">iframe</code>.
+                  </p>
+                  
+                  <div className="bg-[#152236]/30 border border-[#2d3e54] p-3 rounded-lg flex flex-col gap-2">
+                    <span className="font-extrabold uppercase text-[9px] tracking-wider text-[#00c8f0] font-mono block">
+                      ⚡ Actionable Solutions
+                    </span>
+                    <ul className="list-disc list-inside pl-1 text-[10.5px] text-[#7a98b4] flex flex-col gap-1.5 leading-relaxed">
+                      <li>
+                        <strong className="text-white">Open in New Tab</strong>: Click the small icon button <strong className="text-[#00c8f0]">"Open App in New Tab"</strong> at the very top-right corner of your browser's preview pane to bypass the iframe sandbox.
+                      </li>
+                      <li>
+                        <strong className="text-white">Activate Simulator Mode</strong>: Bypass screen capture entirely and use our full high-fidelity chart simulator.
+                      </li>
+                    </ul>
+                  </div>
+                </div>
+
+                <div className="flex flex-col gap-2 mt-2">
+                  <button
+                    onClick={() => {
+                      setShowPermissionOverlay(false);
+                      handleStartSimulation();
+                    }}
+                    className="w-full py-2 bg-[#9d78f8] hover:bg-[#9d78f8]/90 text-white font-extrabold text-[11px] uppercase tracking-wider rounded-lg transition cursor-pointer flex items-center justify-center gap-1.5 shadow-md shadow-[#9d78f8]/20"
+                  >
+                    <Play className="w-3.5 h-3.5 fill-white text-white" />
+                    Activate Simulator Mode
+                  </button>
+
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => {
+                        window.open(window.location.href, "_blank");
+                      }}
+                      className="flex-1 py-1.5 bg-[#00c8f0]/10 hover:bg-[#00c8f0]/20 border border-[#00c8f0]/30 text-[#00c8f0] font-extrabold text-[10.5px] uppercase tracking-wider rounded transition cursor-pointer flex items-center justify-center gap-1"
+                    >
+                      <ExternalLink className="w-3 h-3" />
+                      Try Open New Tab
+                    </button>
+                    <button
+                      onClick={() => setShowPermissionOverlay(false)}
+                      className="py-1.5 px-3 bg-transparent hover:bg-white/5 border border-[#152236] text-[#7a98b4] hover:text-white font-extrabold text-[10.5px] uppercase tracking-wider rounded transition cursor-pointer"
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Performance Tracker Charts */}
           <PerformanceCharts
@@ -2350,6 +2562,13 @@ export default function App() {
             setAnalyses={setMtfAnalyses}
             confluenceResult={mtfConfluenceResult}
             setConfluenceResult={setMtfConfluenceResult}
+            purchases={purchases}
+            activePaymentCode={activePaymentCode}
+            setActivePaymentCode={setActivePaymentCode}
+            currentUser={currentUser}
+            onTriggerVerifyPayment={() => setIsVerifyPaymentOpen(true)}
+            trialUsed={trialUsed}
+            onUseTrial={handleUseTrial}
           />
 
           <AIPanel
@@ -2360,6 +2579,13 @@ export default function App() {
             isCapturing={isCapturing}
             paused={paused}
             onAiAnalysisCompleted={(text) => setLatestAIResponse(text)}
+            purchases={purchases}
+            activePaymentCode={activePaymentCode}
+            setActivePaymentCode={setActivePaymentCode}
+            currentUser={currentUser}
+            onTriggerVerifyPayment={() => setIsVerifyPaymentOpen(true)}
+            trialUsed={trialUsed}
+            onUseTrial={handleUseTrial}
           />
 
           <AudioPanel
@@ -2385,6 +2611,8 @@ export default function App() {
             currentUser={currentUser}
             onAddLog={addLog}
             mtfConfluenceResult={mtfConfluenceResult}
+            purchases={purchases}
+            onPurchaseSuccess={() => currentUser && fetchGlobalPurchases(currentUser)}
           />
 
           <GmailPanel
@@ -2515,6 +2743,19 @@ export default function App() {
         cloudConfluences={cloudConfluences}
         onLoadConfluence={loadHistoricalConfluence}
         onDeleteConfluence={deleteCloudConfluence}
+      />
+
+      <VerifyPaymentModal
+        isOpen={isVerifyPaymentOpen}
+        onClose={() => setIsVerifyPaymentOpen(false)}
+        currentUser={currentUser}
+        onPurchaseSuccess={() => {
+          if (currentUser) {
+            fetchGlobalPurchases(currentUser);
+          }
+        }}
+        setActivePaymentCode={setActivePaymentCode}
+        onAddLog={addLog}
       />
 
     </div>

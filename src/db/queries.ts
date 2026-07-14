@@ -183,3 +183,15 @@ export async function getUserPremiumPurchases(uid: string) {
     throw new Error("Database query failed. Please try again later.", { cause: error });
   }
 }
+
+export async function getVerifiedPurchaseByCode(code: string) {
+  try {
+    const results = await db.select()
+      .from(premiumPurchases)
+      .where(eq(premiumPurchases.transactionCode, code.toUpperCase().trim()));
+    return results[0] || null;
+  } catch (error) {
+    console.error("Database query getVerifiedPurchaseByCode failed:", error);
+    throw new Error("Database query failed. Please try again later.", { cause: error });
+  }
+}
